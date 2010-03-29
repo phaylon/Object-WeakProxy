@@ -1,0 +1,84 @@
+# SYNOPSIS
+
+    use Object::WeakProxy qw( weak_proxy );
+
+    {   package SomeObject;
+        sub new  { bless { }, shift }
+        sub data { (shift)->{data} ||= {} }
+    }
+
+    my $object = SomeObject->new;
+
+    # wrapping an object
+    my $proxy = weak_proxy($object);
+
+    # no problem with cyclic references
+    $proxy->data->{cycle} = $proxy;
+
+# DESCRIPTION
+
+This module allows you to create proxy objects that wrap around your actual
+objects. The proxy object will keep a weakened link to the original and
+delegate all method calls to it, including `can` and `isa`. Once all other
+references to the original have ceased, the proxy will throw an error when you
+try to use it.
+
+## What's this for?
+
+The original idea for this came up for the [Catalyst](http://search.cpan.org/search?mode=module&query=Catalyst) context object. If you
+have the context object in `$ctx`, you might want to stash something that
+takes a reference to the context object itself. Common candidates are URI
+generation callbacks.
+
+Since the stash is managed by the context object you wish to reference, you'd
+have to weaken those references if you don't want your application to leak.
+
+One often used work-around for this tedious procedure is having a method that
+takes a callback and passes in a weakly referenced context object on every
+call. With [Catalyst](http://search.cpan.org/search?mode=module&query=Catalyst)s own [Catalyst::Component::ContextClosure](http://search.cpan.org/search?mode=module&query=Catalyst::Component::ContextClosure) this would
+look something like this:
+
+    sub foo: Chained('/') {
+        my ($self, $ctx) = @_;
+
+        $ctx->stash(uri_for_bar => $self->make_context_closure(sub {
+            my ($ctx, $id) = @_;
+            $ctx->uri_for_action('/bar', $id);
+        }, $ctx));
+    }
+
+If you have to write lots of callbacks, they can become pretty dominant in your
+actions. With a weakened proxy, the same would look like this:
+
+    sub foo: Chained('/') {
+        my ($self, $ctx) = @_;
+
+        $ctx = weak_proxy $ctx;
+
+        $ctx->stash(uri_for_bar => sub { 
+            my ($id) = @_;
+            $ctx->uri_for_action('/bar', $id);
+        });
+    }
+
+Those are both explicitely verbose to keep the comparison fair. The above could
+also be written as:
+
+    $ctx->stash(uri_for_bar => sub { $ctx->uri_for_action('/bar', shift) });
+
+As always, it's up to you how verbose you would like to be.
+
+Also, this module is actually meant to be integrated into [Catalyst](http://search.cpan.org/search?mode=module&query=Catalyst), so it
+can be automatically applied to all user-facing context objects. This means
+you don't have to concern yourself with leaking context objects in your actions
+at all, since the proxy will always break a cyclic reference.
+
+## Stringification
+
+Every proxy will stringify to `Object::WeakProxy::Instance#$class`, with
+`$class` being replaced by the class of the proxied object.
+
+    my $proxy = weak_proxy($object);
+
+Creates a new proxy object. It will throw an error if `$object` is not a
+blessed reference.
